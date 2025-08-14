@@ -1,0 +1,10 @@
+services:
+  imap--notify:
+    build: .
+    container_name: imap-idle-notify
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./certs:/app/certs:ro    # optional if you have certs
+
