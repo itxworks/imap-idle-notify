@@ -1,5 +1,5 @@
 services:
-  imap--notify:
+  imap-notify:
     build: .
     container_name: imap-idle-notify
     env_file:
