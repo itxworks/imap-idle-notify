@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
 ARG GO_VERSION=1.23
+ARG ALPINE_VERSION=3.22.1
 
 ############################
 # Builder stage
@@ -24,7 +25,7 @@ COPY imap-idle-notify.go ./
 RUN go build -o imap-idle-notify imap-idle-notify.go
 
 # --- Final minimal image ---
-FROM alpine:3.18
+FROM alpine:${ALPINE_VERSION}
 
 WORKDIR /app
 
