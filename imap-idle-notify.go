@@ -230,6 +230,29 @@ func sendNotification(sender, subject, body string) {
 	}
 }
 
+// --- Enhanced address checker --- to check against allowed patterns like *@example.com
+func check(addrs []*imap.Address) bool {
+	for _, addr := range addrs {
+		email := strings.ToLower(addr.MailboxName + "@" + addr.HostName)
+
+		// Check against all allowed patterns
+		for allowed := range AllowedFrom {
+			// If pattern starts with @, it's a domain pattern
+			if strings.HasPrefix(allowed, "@") {
+				if strings.HasSuffix(email, allowed) {
+					return true
+				}
+			} else {
+				// Otherwise, it's an exact email match
+				if email == allowed {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // --- Message Processing ---
 func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySectionName) {
 	log.Println("Processing message...")
@@ -238,15 +261,6 @@ func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySecti
 	}
 
 	matched := false
-	check := func(addrs []*imap.Address) bool {
-		for _, addr := range addrs {
-			email := strings.ToLower(addr.MailboxName + "@" + addr.HostName)
-			if AllowedFrom[email] {
-				return true
-			}
-		}
-		return false
-	}
 
 	if CheckFrom && check(msg.Envelope.From) {
 		matched = true
