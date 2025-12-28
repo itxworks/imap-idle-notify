@@ -34,6 +34,9 @@ CHECK_CC=false
 CHECK_BCC=false
 CHECK_TO=false
 
+# SKIP Filter
+NOTIFY_ALL_EMAILS=false
+
 # Delete Message after processing 
 DELETE_AFTER_PROCESSING=false
 
