@@ -82,6 +82,8 @@ var (
 	CheckBcc  = envBool("CHECK_BCC", false)
 	CheckTo   = envBool("CHECK_TO", false)
 
+	NotifyAllEmails = envBool("NOTIFY_ALL_EMAILS", false)
+
 	NotifierType   = env("NOTIFIER_TYPE", "gotify") // gotify or ntfy
 	GotifyURL      = env("GOTIFY_URL", "")
 	GotifyToken    = env("GOTIFY_TOKEN", "")
@@ -260,22 +262,24 @@ func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySecti
 		return
 	}
 
-	matched := false
+	// If NOTIFY_ALL_EMAILS is false, apply filtering
+	if !NotifyAllEmails {
+		matched := false
 
-	if CheckFrom && check(msg.Envelope.From) {
-		matched = true
-	} else if CheckCc && check(msg.Envelope.Cc) {
-		matched = true
-	} else if CheckBcc && check(msg.Envelope.Bcc) {
-		matched = true
-	} else if CheckTo && check(msg.Envelope.To) {
-		matched = true
+		if CheckFrom && check(msg.Envelope.From) {
+			matched = true
+		} else if CheckCc && check(msg.Envelope.Cc) {
+			matched = true
+		} else if CheckBcc && check(msg.Envelope.Bcc) {
+			matched = true
+		} else if CheckTo && check(msg.Envelope.To) {
+			matched = true
+		}
+
+		if !matched {
+			return
+		}
 	}
-
-	if !matched {
-		return
-	}
-
 	r := msg.GetBody(section)
 	if r == nil {
 		return
