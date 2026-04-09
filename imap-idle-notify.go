@@ -76,6 +76,7 @@ var (
 
 	FromFilter            = envList("FROM_FILTER", "user@gmail.com,test@example.com")
 	DeleteAfterProcessing = envBool("DELETE_AFTER_PROCESSING", false)
+	IMAPFlag = env("IMAP_FLAG", "\\Seen")
 
 	CheckFrom = envBool("CHECK_FROM", true)
 	CheckCc   = envBool("CHECK_CC", false)
@@ -92,6 +93,9 @@ var (
 	NtfyTopic      = env("NTFY_TOPIC", "")
 	NtfyAuthToken  = env("NTFY_AUTH_TOKEN", "")
 	NtfyPriority   = envInt("NTFY_PRIORITY", 5)
+	NtfyClickAction = env("NTFY_CLICK_ACTION", "")
+
+	SendMessageBody = envBool("SEND_MESSAGE_BODY", true)
 
 	AllowedFrom = make(map[string]bool)
 )
@@ -208,6 +212,9 @@ func sendNtfy(sender, subject, body string) {
 	if NtfyAuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+NtfyAuthToken)
 	}
+	if NtfyClickAction != "" {
+		req.Header.Set("Click", NtfyClickAction)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -280,37 +287,39 @@ func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySecti
 			return
 		}
 	}
-	r := msg.GetBody(section)
-	if r == nil {
-		return
-	}
-
-	mr, err := mail.CreateReader(r)
-	if err != nil {
-		log.Println("Mail read error:", err)
-		return
-	}
-
 	var bodyText string
-	for {
-		p, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Println("Part read error:", err)
-			break
+	if SendMessageBody {
+		r := msg.GetBody(section)
+		if r == nil {
+			return
 		}
 
-		switch h := p.Header.(type) {
-		case *mail.InlineHeader:
-			ct, _, _ := h.ContentType()
-			data, _ := io.ReadAll(io.LimitReader(p.Body, 10240))
-			if strings.HasPrefix(ct, "text/plain") {
-				bodyText = string(data)
-				goto SEND
-			} else if strings.HasPrefix(ct, "text/html") && bodyText == "" {
-				bodyText = htmlToText(string(data))
+		mr, err := mail.CreateReader(r)
+		if err != nil {
+			log.Println("Mail read error:", err)
+			return
+		}
+
+		for {
+			p, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Println("Part read error:", err)
+				break
+			}
+
+			switch h := p.Header.(type) {
+			case *mail.InlineHeader:
+				ct, _, _ := h.ContentType()
+				data, _ := io.ReadAll(io.LimitReader(p.Body, 10240))
+				if strings.HasPrefix(ct, "text/plain") {
+					bodyText = string(data)
+					goto SEND
+				} else if strings.HasPrefix(ct, "text/html") && bodyText == "" {
+					bodyText = htmlToText(string(data))
+				}
 			}
 		}
 	}
@@ -327,12 +336,12 @@ SEND:
 
 	sendNotification(sender, subject, bodyText)
 
-	// mark seen
+	// add flag
 	seqset := new(imap.SeqSet)
 	seqset.AddNum(msg.SeqNum)
-	flags := []interface{}{imap.SeenFlag}
+	flags := []interface{}{IMAPFlag}
 	if err := c.Store(seqset, imap.FormatFlagsOp(imap.AddFlags, true), flags, nil); err != nil {
-		log.Println("Failed to mark seen:", err)
+		log.Println("Failed to add flag:", err)
 	}
 
 	if DeleteAfterProcessing {
@@ -356,7 +365,7 @@ SEND:
 func fetchUnseen(c *client.Client, section *imap.BodySectionName) {
 	log.Println("Fetching unseen messages...")
 	criteria := imap.NewSearchCriteria()
-	criteria.WithoutFlags = []string{"\\Seen"}
+	criteria.WithoutFlags = []string{IMAPFlag, imap.SeenFlag}
 	ids, err := c.Search(criteria)
 	if err != nil || len(ids) == 0 {
 		return

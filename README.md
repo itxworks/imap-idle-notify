@@ -40,6 +40,10 @@ NOTIFY_ALL_EMAILS=false
 # Delete Message after processing 
 DELETE_AFTER_PROCESSING=false
 
+# IMAP flag used to detect new messages
+# With \\Seen, messages will be marked as read when processed while they won't with a custom flag. Custom flag must not contain backslashes.
+IMAP_FLAG=\\Seen
+
 # Notifier
 NOTIFIER_TYPE=gotify# "gotify" or "ntfy"
 GOTIFY_URL=https://gotify.example.com
@@ -49,6 +53,10 @@ NTFY_URL=https://ntfy.sh
 NTFY_TOPIC=emails
 NTFY_AUTH_TOKEN=
 NTFY_PRIORITY=5#Message priority (1=min, 5=max)
+NTFY_CLICK_ACTION=k9mail://messages
+
+# Send the body of message to notification
+SEND_MESSAGE_BODY=true
 
 # Timezone
 TZ=UTC
