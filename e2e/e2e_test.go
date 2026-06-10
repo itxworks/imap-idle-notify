@@ -204,6 +204,60 @@ func TestGotifyTokenAndPriority(t *testing.T) {
 	}
 }
 
+// TestGotifyLiveServer drives the daemon against a real Gotify server: an app
+// token is minted, the notification is posted, and the message is read back
+// through Gotify's own API with the expected title and priority. This proves
+// the request the daemon emits is actually accepted, beyond the wire-format
+// assertions in TestGotifyTokenAndPriority.
+func TestGotifyLiveServer(t *testing.T) {
+	purgeMailbox(t)
+	base := startGotify(t)
+	token := createGotifyApp(t, base)
+	sendMail(t, "gotify@example.com", "Real gotify", "body-token-realgotify")
+	runDaemon(t, map[string]string{
+		"NOTIFIER_TYPE": "gotify", "GOTIFY_URL": base,
+		"GOTIFY_TOKEN": token, "GOTIFY_PRIORITY": "7",
+		"FROM_FILTER": "gotify@example.com", "CHECK_FROM": "true",
+	})
+
+	msg := waitForGotifyMessage(t, base, "body-token-realgotify")
+	if !strings.Contains(msg.Title, "Email from gotify@example.com") {
+		t.Errorf("title was %q", msg.Title)
+	}
+	if !strings.Contains(msg.Message, "Subject: Real gotify") {
+		t.Errorf("subject missing from message: %q", msg.Message)
+	}
+	if msg.Priority != 7 {
+		t.Errorf("priority was %d, want 7", msg.Priority)
+	}
+}
+
+// TestNtfyLiveServer drives the daemon against a real ntfy server and reads the
+// published message back from the topic's cached stream, confirming the title
+// and priority headers the daemon sets are honoured by a real implementation.
+func TestNtfyLiveServer(t *testing.T) {
+	purgeMailbox(t)
+	base := startNtfy(t)
+	const topic = "t"
+	sendMail(t, "ntfy@example.com", "Real ntfy", "body-token-realntfy")
+	runDaemon(t, map[string]string{
+		"NOTIFIER_TYPE": "ntfy", "NTFY_URL": base, "NTFY_TOPIC": topic,
+		"NTFY_PRIORITY": "4",
+		"FROM_FILTER":   "ntfy@example.com", "CHECK_FROM": "true",
+	})
+
+	msg := waitForNtfyMessage(t, base, topic, "body-token-realntfy")
+	if !strings.Contains(msg.Title, "Email from ntfy@example.com") {
+		t.Errorf("title was %q", msg.Title)
+	}
+	if !strings.Contains(msg.Message, "Subject: Real ntfy") {
+		t.Errorf("subject missing from message: %q", msg.Message)
+	}
+	if msg.Priority != 4 {
+		t.Errorf("priority was %d, want 4", msg.Priority)
+	}
+}
+
 // Regression for commit 08b2833: deletion is scoped to the processed message
 // via UID EXPUNGE. A bystander message already flagged \Deleted must survive,
 // since an unscoped Expunge would wrongly remove it too.
