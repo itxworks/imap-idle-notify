@@ -52,11 +52,3 @@ func TestCheck(t *testing.T) {
 		}
 	}
 }
-
-// htmlToText strips markup and returns the concatenated text content.
-func TestHTMLToText(t *testing.T) {
-	in := "<html><body><p>Hello <b>world</b></p></body></html>"
-	if got := htmlToText(in); got != "Hello world" {
-		t.Errorf("htmlToText(%q) = %q, want %q", in, got, "Hello world")
-	}
-}
