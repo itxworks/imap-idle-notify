@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -177,4 +178,30 @@ func runDaemon(t *testing.T, env map[string]string) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+}
+
+// runDaemonExit starts the binary with only the given env and waits for it to
+// exit on its own, returning whether it failed and its combined output.
+func runDaemonExit(t *testing.T, env map[string]string, timeout time.Duration) (failed bool, output string) {
+	t.Helper()
+	cmd := exec.Command(binPath)
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	must(cmd.Start())
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err != nil, buf.String()
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatalf("daemon did not exit within %s; output:\n%s", timeout, buf.String())
+		return false, buf.String()
+	}
 }

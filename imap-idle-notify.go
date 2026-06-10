@@ -8,7 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -64,6 +64,25 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return val == "1" || val == "true" || val == "yes"
+}
+
+// initLogger honours LOG_LEVEL (debug|info|warn|error) and LOG_JSON.
+func initLogger() {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler = slog.NewTextHandler(os.Stderr, opts)
+	if envBool("LOG_JSON", false) {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(handler))
 }
 
 // --- Config ---
@@ -171,9 +190,9 @@ func startHealthServer() {
 	})
 	addr := fmt.Sprintf("127.0.0.1:%d", HealthPort)
 	go func() {
-		log.Println("Health endpoint listening on", addr+"/healthz")
+		slog.Debug("health endpoint listening", "addr", addr+"/healthz")
 		if err := http.ListenAndServe(addr, mux); err != nil {
-			log.Println("Health server error:", err)
+			slog.Error("health server stopped", "err", err)
 		}
 	}()
 }
@@ -184,20 +203,20 @@ func runHealthProbe() int {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Println("Health probe failed:", err)
+		slog.Error("health probe failed", "err", err)
 		return 1
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		return 0
 	}
-	log.Println("Health probe: unhealthy, status", resp.StatusCode)
+	slog.Error("health probe unhealthy", "status", resp.StatusCode)
 	return 1
 }
 
 // --- TLS Loader ---
 func loadTLSConfig() (*tls.Config, error) {
-	log.Println("Loading TLS configuration...")
+	slog.Debug("loading TLS configuration")
 	tlsConfig := &tls.Config{InsecureSkipVerify: false}
 
 	if IMAPCACert != "" {
@@ -252,14 +271,14 @@ func sendGotify(sender, subject, body string) {
 	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		log.Println("[Gotify] Marshal error:", err)
+		slog.Error("gotify marshal failed", "err", err)
 		return
 	}
 	url := fmt.Sprintf("%s/message", GotifyURL)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Println("[Gotify] Request creation error:", err)
+		slog.Error("gotify request creation failed", "err", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -268,15 +287,15 @@ func sendGotify(sender, subject, body string) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Println("[Gotify] Send error:", err)
+		slog.Error("gotify send failed", "err", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Println("[Gotify] Notification sent")
+		slog.Debug("gotify notification sent")
 	} else {
-		log.Println("[Gotify] Server returned:", resp.Status)
+		slog.Error("gotify server rejected notification", "status", resp.Status)
 	}
 }
 
@@ -286,7 +305,7 @@ func sendNtfy(sender, subject, body string) {
 
 	req, err := http.NewRequest("POST", url, strings.NewReader(message))
 	if err != nil {
-		log.Println("[ntfy] Request creation error:", err)
+		slog.Error("ntfy request creation failed", "err", err)
 		return
 	}
 
@@ -302,15 +321,15 @@ func sendNtfy(sender, subject, body string) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Println("[ntfy] Send error:", err)
+		slog.Error("ntfy send failed", "err", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Println("[ntfy] Notification sent")
+		slog.Debug("ntfy notification sent")
 	} else {
-		log.Println("[ntfy] Server returned:", resp.Status)
+		slog.Error("ntfy server rejected notification", "status", resp.Status)
 	}
 }
 
@@ -346,41 +365,69 @@ func check(addrs []*imap.Address) bool {
 	return false
 }
 
+type addressCheck struct {
+	enabled bool
+	addrs   func(*imap.Envelope) []*imap.Address
+}
+
+// addressChecks lists every envelope field that can be filtered on.
+func addressChecks() []addressCheck {
+	return []addressCheck{
+		{CheckFrom, func(e *imap.Envelope) []*imap.Address { return e.From }},
+		{CheckCc, func(e *imap.Envelope) []*imap.Address { return e.Cc }},
+		{CheckBcc, func(e *imap.Envelope) []*imap.Address { return e.Bcc }},
+		{CheckTo, func(e *imap.Envelope) []*imap.Address { return e.To }},
+	}
+}
+
+func shouldNotify(env *imap.Envelope) bool {
+	if NotifyAllEmails {
+		return true
+	}
+	for _, c := range addressChecks() {
+		if c.enabled && check(c.addrs(env)) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateConfig rejects configurations that could never produce a notification.
+func validateConfig() error {
+	if NotifyAllEmails {
+		return nil
+	}
+	for _, c := range addressChecks() {
+		if c.enabled {
+			return nil
+		}
+	}
+	return fmt.Errorf("no notifications possible: set NOTIFY_ALL_EMAILS=true or enable at least one CHECK_* filter")
+}
+
 // --- Message Processing ---
 func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySectionName) {
-	log.Println("Processing message...")
 	if msg == nil || msg.Envelope == nil {
+		slog.Warn("skipping message with no envelope")
 		return
 	}
+	slog.Debug("processing message", "subject", msg.Envelope.Subject)
 
-	// If NOTIFY_ALL_EMAILS is false, apply filtering
-	if !NotifyAllEmails {
-		matched := false
-
-		if CheckFrom && check(msg.Envelope.From) {
-			matched = true
-		} else if CheckCc && check(msg.Envelope.Cc) {
-			matched = true
-		} else if CheckBcc && check(msg.Envelope.Bcc) {
-			matched = true
-		} else if CheckTo && check(msg.Envelope.To) {
-			matched = true
-		}
-
-		if !matched {
-			return
-		}
+	if !shouldNotify(msg.Envelope) {
+		slog.Debug("message did not match filters, skipping", "subject", msg.Envelope.Subject)
+		return
 	}
 	var bodyText string
 	if SendMessageBody {
 		r := msg.GetBody(section)
 		if r == nil {
+			slog.Warn("message body not returned by server", "subject", msg.Envelope.Subject)
 			return
 		}
 
 		mr, err := mail.CreateReader(r)
 		if err != nil {
-			log.Println("Mail read error:", err)
+			slog.Error("mail read failed", "err", err)
 			return
 		}
 
@@ -390,7 +437,7 @@ func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySecti
 				break
 			}
 			if err != nil {
-				log.Println("Part read error:", err)
+				slog.Error("mail part read failed", "err", err)
 				break
 			}
 
@@ -425,41 +472,40 @@ SEND:
 	seqset.AddNum(msg.SeqNum)
 	flags := []interface{}{IMAPFlag}
 	if err := c.Store(seqset, imap.FormatFlagsOp(imap.AddFlags, true), flags, nil); err != nil {
-		log.Println("Failed to add flag:", err)
+		slog.Error("failed to add flag", "flag", IMAPFlag, "err", err)
 	}
 
 	if DeleteAfterProcessing {
-		// mark as deleted
 		if err := c.Store(seqset, imap.FormatFlagsOp(imap.AddFlags, true), []interface{}{imap.DeletedFlag}, nil); err != nil {
-			log.Println("Failed to mark deleted:", err)
-		} else {
-			log.Println("Message marked for deletion")
-			// Expunge only this message via UID EXPUNGE (UIDPLUS) so other
-			// \Deleted messages in the mailbox are left untouched
-			uidClient := uidplus.NewClient(c)
-			if supported, err := uidClient.SupportUidPlus(); err == nil && supported && msg.Uid != 0 {
-				uidSet := new(imap.SeqSet)
-				uidSet.AddNum(msg.Uid)
-				if err := uidClient.UidExpunge(uidSet, nil); err != nil {
-					log.Println("Failed to expunge:", err)
-				} else {
-					log.Println("Message deleted from server")
-				}
+			slog.Error("failed to mark message deleted", "err", err)
+			return
+		}
+		slog.Debug("message marked for deletion")
+		// Expunge only this message via UID EXPUNGE (UIDPLUS) so other
+		// \Deleted messages in the mailbox are left untouched.
+		uidClient := uidplus.NewClient(c)
+		if supported, err := uidClient.SupportUidPlus(); err == nil && supported && msg.Uid != 0 {
+			uidSet := new(imap.SeqSet)
+			uidSet.AddNum(msg.Uid)
+			if err := uidClient.UidExpunge(uidSet, nil); err != nil {
+				slog.Error("failed to expunge message", "err", err)
 			} else {
-				log.Println("Server lacks UIDPLUS; message stays flagged \\Deleted until next expunge")
+				slog.Debug("message deleted from server")
 			}
+		} else {
+			slog.Warn("server lacks UIDPLUS; message stays flagged \\Deleted until next expunge")
 		}
 	}
-
 }
 
 // --- Fetch Unseen ---
 func fetchUnseen(c *client.Client, section *imap.BodySectionName) {
-	log.Println("Fetching unseen messages...")
+	slog.Debug("fetching unseen messages")
 	criteria := imap.NewSearchCriteria()
 	criteria.WithoutFlags = []string{IMAPFlag, imap.SeenFlag}
 	ids, err := c.Search(criteria)
 	if err != nil {
+		slog.Error("search for unseen messages failed", "err", err)
 		return
 	}
 	markHealthy()
@@ -477,7 +523,9 @@ func fetchUnseen(c *client.Client, section *imap.BodySectionName) {
 	for msg := range messages {
 		processMessage(c, msg, section)
 	}
-	<-done
+	if err := <-done; err != nil {
+		slog.Error("fetch failed", "err", err)
+	}
 }
 
 // --- Single IMAP session ---
@@ -488,7 +536,7 @@ func runIMAPSession() error {
 	}
 
 	addr := fmt.Sprintf("%s:%d", IMAPHost, IMAPPort)
-	log.Println("Connecting to IMAP server:", addr)
+	slog.Debug("connecting to IMAP server", "addr", addr)
 	conn, err := tls.Dial("tcp", addr, tlsConfig)
 	if err != nil {
 		return fmt.Errorf("IMAP connection error: %w", err)
@@ -504,7 +552,7 @@ func runIMAPSession() error {
 	if err := c.Login(IMAPUser, IMAPPass); err != nil {
 		return fmt.Errorf("IMAP login error: %w", err)
 	}
-	log.Println("Logged in successfully")
+	slog.Debug("logged in successfully")
 
 	if _, err = c.Select("INBOX", false); err != nil {
 		return fmt.Errorf("Select INBOX error: %w", err)
@@ -560,15 +608,21 @@ func runIMAPSession() error {
 func main() {
 	probe := flag.Bool("healthcheck", false, "probe the local /healthz endpoint and exit 0/1")
 	flag.Parse()
+	initLogger()
 	if *probe {
 		os.Exit(runHealthProbe())
 	}
 
-	log.Println("Starting IMAP notifier...")
+	if err := validateConfig(); err != nil {
+		slog.Error("invalid configuration", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("starting IMAP notifier")
 
 	for _, addr := range FromFilter {
 		AllowedFrom[addr] = true
-		log.Println("Allowed sender:", addr)
+		slog.Debug("allowed sender", "addr", addr)
 	}
 
 	startHealthServer()
@@ -578,13 +632,13 @@ func main() {
 
 	for {
 		if err := runIMAPSession(); err != nil {
-			log.Println("Session error:", err)
+			slog.Error("session ended with error", "err", err)
 			markFailure()
 		} else {
 			return // graceful exit (unlikely in normal runs)
 		}
 
-		log.Printf("Reconnecting in %s...\n", backoff)
+		slog.Warn("reconnecting after backoff", "backoff", backoff)
 		time.Sleep(backoff)
 		backoff *= 2
 		if backoff > maxBackoff {

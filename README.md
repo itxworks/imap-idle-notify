@@ -34,7 +34,8 @@ CHECK_CC=false
 CHECK_BCC=false
 CHECK_TO=false
 
-# SKIP Filter
+# Bypass all filters and notify on every message. The daemon refuses to start
+# if this is false while every CHECK_* is also false.
 NOTIFY_ALL_EMAILS=false
 
 # Delete Message after processing 

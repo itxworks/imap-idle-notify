@@ -119,3 +119,19 @@ func TestNotifyAll(t *testing.T) {
 	runDaemon(t, ntfyEnv(rec, map[string]string{"NOTIFY_ALL_EMAILS": "true"}))
 	rec.waitFor(t, "body-token-all")
 }
+
+// TestNoNotificationPathFailsFast: a config that could never notify (no
+// NOTIFY_ALL_EMAILS and every CHECK_* off) must exit with an error at startup
+// rather than run silently and deliver nothing.
+func TestNoNotificationPathFailsFast(t *testing.T) {
+	failed, output := runDaemonExit(t, map[string]string{
+		"CHECK_FROM": "false", "CHECK_CC": "false", "CHECK_BCC": "false", "CHECK_TO": "false",
+		"NOTIFY_ALL_EMAILS": "false",
+	}, 10*time.Second)
+	if !failed {
+		t.Fatalf("daemon should exit non-zero on a no-notification config; output:\n%s", output)
+	}
+	if !containsStr(output, "no notifications possible") {
+		t.Errorf("expected a clear validation error, got:\n%s", output)
+	}
+}
