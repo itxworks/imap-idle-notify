@@ -183,11 +183,16 @@ func TestGotifyTokenAndPriority(t *testing.T) {
 }
 
 // Regression for commit 08b2833: deletion is scoped to the processed message
-// via UID EXPUNGE, leaving other mail untouched.
+// via UID EXPUNGE. A bystander message already flagged \Deleted must survive,
+// since an unscoped Expunge would wrongly remove it too.
 func TestScopedExpunge(t *testing.T) {
 	purgeMailbox(t)
 	rec := newRecorder(t)
-	sendMail(t, "keepme@example.com", "Keep", "keep-token")
+
+	// A pre-existing \Deleted message that the daemon must NOT expunge.
+	sendMail(t, "bystander@example.com", "Bystander", "bystander-token")
+	markDeleted(t, "bystander-token")
+
 	sendMail(t, "deleteme@example.com", "Delete", "delete-token")
 	runDaemon(t, ntfyEnv(rec, map[string]string{
 		"FROM_FILTER": "deleteme@example.com", "CHECK_FROM": "true",
@@ -202,7 +207,7 @@ func TestScopedExpunge(t *testing.T) {
 	if mailboxHas(t, "delete-token") {
 		t.Error("processed message was not expunged")
 	}
-	if !mailboxHas(t, "keep-token") {
-		t.Error("non-matching message was unexpectedly removed")
+	if !mailboxHas(t, "bystander-token") {
+		t.Error("bystander \\Deleted message was wrongly expunged (deletion not scoped)")
 	}
 }

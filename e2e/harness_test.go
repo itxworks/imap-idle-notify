@@ -326,6 +326,26 @@ func purgeMailbox(t *testing.T) {
 	})
 }
 
+// markDeleted flags the message containing token as \Deleted without
+// expunging it, so it stays in the mailbox as a bystander deleted message.
+func markDeleted(t *testing.T, token string) {
+	t.Helper()
+	imapDo(t, func(c *client.Client) {
+		_, err := c.Select("INBOX", false)
+		must(err)
+		crit := imap.NewSearchCriteria()
+		crit.Body = []string{token}
+		ids, err := c.Search(crit)
+		must(err)
+		if len(ids) == 0 {
+			t.Fatalf("message %q not found to mark deleted", token)
+		}
+		set := new(imap.SeqSet)
+		set.AddNum(ids...)
+		must(c.Store(set, imap.FormatFlagsOp(imap.AddFlags, true), []interface{}{imap.DeletedFlag}, nil))
+	})
+}
+
 func mailboxHas(t *testing.T, token string) bool {
 	t.Helper()
 	found := false
