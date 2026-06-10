@@ -173,7 +173,7 @@ func sendGotify(sender, subject, body string) {
 		log.Println("[Gotify] Marshal error:", err)
 		return
 	}
-	url := fmt.Sprintf("%s/message?token=%s", GotifyURL, GotifyToken)
+	url := fmt.Sprintf("%s/message", GotifyURL)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -181,6 +181,8 @@ func sendGotify(sender, subject, body string) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Token in a header keeps it out of access logs and proxies
+	req.Header.Set("X-Gotify-Key", GotifyToken)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
