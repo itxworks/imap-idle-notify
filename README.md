@@ -58,6 +58,10 @@ NTFY_CLICK_ACTION=k9mail://messages
 # Send the body of message to notification
 SEND_MESSAGE_BODY=true
 
+# Health endpoint (used by the Docker HEALTHCHECK)
+HEALTH_PORT=8080
+HEALTH_MAX_FAILURES=5
+
 # Timezone
 TZ=UTC
 

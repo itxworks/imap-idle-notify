@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/emersion/go-imap"
@@ -112,6 +114,85 @@ var httpClient = &http.Client{
 		TLSHandshakeTimeout: 10 * time.Second,
 		ForceAttemptHTTP2:   true,
 	},
+}
+
+// --- Health tracking ---
+//
+// idleRefresh is the longest normal gap between health stamps on a quiet
+// mailbox, so healthTimeout must exceed it (plus slack) to avoid flapping.
+// Keep them coupled: if idleRefresh changes, healthTimeout follows.
+const (
+	idleRefresh   = 29 * time.Minute
+	healthSlack   = 2 * time.Minute
+	healthTimeout = idleRefresh + healthSlack
+)
+
+var (
+	HealthPort  = envInt("HEALTH_PORT", 8080)
+	MaxFailures = int64(envInt("HEALTH_MAX_FAILURES", 5))
+)
+
+// lastHealthyUnixNano catches silent death (wedged/deaf-but-open socket);
+// consecutiveFailures catches loud, fast death (auth rejected, refused).
+var health struct {
+	lastHealthyUnixNano atomic.Int64
+	consecutiveFailures atomic.Int64
+}
+
+func markHealthy() {
+	health.lastHealthyUnixNano.Store(time.Now().UnixNano())
+	health.consecutiveFailures.Store(0)
+}
+
+func markFailure() {
+	health.consecutiveFailures.Add(1)
+}
+
+func healthy() bool {
+	last := health.lastHealthyUnixNano.Load()
+	if last == 0 || time.Since(time.Unix(0, last)) > healthTimeout {
+		return false
+	}
+	return health.consecutiveFailures.Load() < MaxFailures
+}
+
+// startHealthServer serves GET /healthz on localhost for the HEALTHCHECK probe
+// (same network namespace, so 127.0.0.1 is reachable).
+func startHealthServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if healthy() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "ok\n")
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "unhealthy\n")
+	})
+	addr := fmt.Sprintf("127.0.0.1:%d", HealthPort)
+	go func() {
+		log.Println("Health endpoint listening on", addr+"/healthz")
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Println("Health server error:", err)
+		}
+	}()
+}
+
+// runHealthProbe is the -healthcheck mode: probe /healthz and exit 0/1.
+func runHealthProbe() int {
+	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", HealthPort)
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Println("Health probe failed:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return 0
+	}
+	log.Println("Health probe: unhealthy, status", resp.StatusCode)
+	return 1
 }
 
 // --- TLS Loader ---
@@ -378,7 +459,11 @@ func fetchUnseen(c *client.Client, section *imap.BodySectionName) {
 	criteria := imap.NewSearchCriteria()
 	criteria.WithoutFlags = []string{IMAPFlag, imap.SeenFlag}
 	ids, err := c.Search(criteria)
-	if err != nil || len(ids) == 0 {
+	if err != nil {
+		return
+	}
+	markHealthy()
+	if len(ids) == 0 {
 		return
 	}
 
@@ -424,6 +509,7 @@ func runIMAPSession() error {
 	if _, err = c.Select("INBOX", false); err != nil {
 		return fmt.Errorf("Select INBOX error: %w", err)
 	}
+	markHealthy() // login + mailbox round-trip succeeded
 
 	// Use PEEK to avoid setting \Seen during fetch
 	section := &imap.BodySectionName{Peek: true}
@@ -437,6 +523,8 @@ func runIMAPSession() error {
 	for {
 		stopIdle := make(chan struct{})
 		idleDone := make(chan error, 1)
+
+		markHealthy() // actively (re)entering IDLE
 
 		go func() {
 			idleDone <- idleClient.Idle(stopIdle)
@@ -457,7 +545,7 @@ func runIMAPSession() error {
 				return fmt.Errorf("idle error: %w", err)
 			}
 			// No error: loop will start IDLE again
-		case <-time.After(29 * time.Minute):
+		case <-time.After(idleRefresh):
 			// RFC: break IDLE periodically to send a command
 			close(stopIdle)
 			if err := <-idleDone; err != nil {
@@ -470,6 +558,12 @@ func runIMAPSession() error {
 
 // --- MAIN ---
 func main() {
+	probe := flag.Bool("healthcheck", false, "probe the local /healthz endpoint and exit 0/1")
+	flag.Parse()
+	if *probe {
+		os.Exit(runHealthProbe())
+	}
+
 	log.Println("Starting IMAP notifier...")
 
 	for _, addr := range FromFilter {
@@ -477,16 +571,17 @@ func main() {
 		log.Println("Allowed sender:", addr)
 	}
 
-	// Reconnect loop with exponential backoff
+	startHealthServer()
+
 	backoff := 2 * time.Second
 	const maxBackoff = 1 * time.Minute
 
 	for {
 		if err := runIMAPSession(); err != nil {
 			log.Println("Session error:", err)
+			markFailure()
 		} else {
-			// graceful exit (unlikely in normal runs)
-			return
+			return // graceful exit (unlikely in normal runs)
 		}
 
 		log.Printf("Reconnecting in %s...\n", backoff)

@@ -38,5 +38,8 @@ ENV TZ=UTC
 # distroless/static:nonroot already runs as uid 65532
 USER nonroot:nonroot
 
+HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["/imap-idle-notify", "-healthcheck"]
+
 # Run the binary
 ENTRYPOINT ["/imap-idle-notify"]
