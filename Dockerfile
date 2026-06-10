@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 
 ARG GO_VERSION=1.26
-ARG ALPINE_VERSION=3.22.1
 
 ############################
 # Builder stage
@@ -10,9 +9,8 @@ FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /app
 
-# Install git for go modules (if needed)
-RUN apk add --no-cache ca-certificates tzdata git
-
+# ca-certificates and tzdata are copied into the final image
+RUN apk add --no-cache ca-certificates tzdata
 
 # Copy Go modules files first for caching
 COPY go.mod go.sum ./
@@ -21,26 +19,24 @@ RUN go mod download
 # Copy source code
 COPY imap-idle-notify.go ./
 
-# Build the binary
-RUN go build -o imap-idle-notify imap-idle-notify.go
+# Build a static binary (no cgo) so it runs on distroless/static
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o imap-idle-notify imap-idle-notify.go
 
 # --- Final minimal image ---
-FROM alpine:${ALPINE_VERSION}
+FROM gcr.io/distroless/static-debian12:nonroot
 
-WORKDIR /app
+# Copy certificates and timezone data from the builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Copy the binary from builder
-COPY --from=builder /app/imap-idle-notify ./
-
-# Copy certificates if needed (optional)
-# COPY certs/ /app/certs/
+COPY --from=builder /app/imap-idle-notify /imap-idle-notify
 
 # Use .env to pass env vars
 ENV TZ=UTC
 
-# Run as unprivileged user
-RUN adduser -D -H -u 10001 app && chown -R app:app /app
-USER app
+# distroless/static:nonroot already runs as uid 65532
+USER nonroot:nonroot
 
 # Run the binary
-CMD ["./imap-idle-notify"]
+ENTRYPOINT ["/imap-idle-notify"]
