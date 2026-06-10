@@ -164,7 +164,11 @@ func TestGotifyTokenAndPriority(t *testing.T) {
 
 	req := rec.waitFor(t, "body-token-gotify")
 	if req.Path != "/message" {
-		t.Errorf("request path was %q; token must not be in the URL", req.Path)
+		t.Errorf("request path was %q, want /message", req.Path)
+	}
+	// The token must travel in the header, never in the URL (path or query).
+	if strings.Contains(req.RawQuery, "secret-gotify-token") {
+		t.Errorf("token leaked into URL query: %q", req.RawQuery)
 	}
 	if got := req.Header.Get("X-Gotify-Key"); got != "secret-gotify-token" {
 		t.Errorf("X-Gotify-Key was %q", got)

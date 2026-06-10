@@ -196,9 +196,10 @@ func runDaemon(t *testing.T, env map[string]string) {
 // --- fake notifier ---------------------------------------------------------
 
 type capturedReq struct {
-	Path   string
-	Header http.Header
-	Body   string
+	Path     string
+	RawQuery string
+	Header   http.Header
+	Body     string
 }
 
 type recorder struct {
@@ -214,7 +215,7 @@ func newRecorder(t *testing.T) *recorder {
 		body := make([]byte, req.ContentLength)
 		_, _ = req.Body.Read(body)
 		r.mu.Lock()
-		r.reqs = append(r.reqs, capturedReq{Path: req.URL.Path, Header: req.Header.Clone(), Body: string(body)})
+		r.reqs = append(r.reqs, capturedReq{Path: req.URL.Path, RawQuery: req.URL.RawQuery, Header: req.Header.Clone(), Body: string(body)})
 		r.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
