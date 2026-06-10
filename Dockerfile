@@ -5,7 +5,7 @@ ARG GO_VERSION=1.26
 ############################
 # Builder stage
 ############################
-FROM golang:${GO_VERSION}-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /app
 
@@ -19,8 +19,10 @@ RUN go mod download
 # Copy source code
 COPY imap-idle-notify.go ./
 
-# Build a static binary (no cgo) so it runs on distroless/static
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o imap-idle-notify imap-idle-notify.go
+# Build a static binary (no cgo) so it runs on distroless/static.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o imap-idle-notify imap-idle-notify.go
 
 # --- Final minimal image ---
 FROM gcr.io/distroless/static-debian12:nonroot
