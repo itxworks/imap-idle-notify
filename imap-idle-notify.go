@@ -17,6 +17,7 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap-idle"
+	"github.com/emersion/go-imap-uidplus"
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
 	"golang.org/x/net/html"
@@ -352,11 +353,19 @@ SEND:
 			log.Println("Failed to mark deleted:", err)
 		} else {
 			log.Println("Message marked for deletion")
-			// permanently remove it
-			if err := c.Expunge(nil); err != nil {
-				log.Println("Failed to expunge:", err)
+			// Expunge only this message via UID EXPUNGE (UIDPLUS) so other
+			// \Deleted messages in the mailbox are left untouched
+			uidClient := uidplus.NewClient(c)
+			if supported, err := uidClient.SupportUidPlus(); err == nil && supported && msg.Uid != 0 {
+				uidSet := new(imap.SeqSet)
+				uidSet.AddNum(msg.Uid)
+				if err := uidClient.UidExpunge(uidSet, nil); err != nil {
+					log.Println("Failed to expunge:", err)
+				} else {
+					log.Println("Message deleted from server")
+				}
 			} else {
-				log.Println("Message deleted from server")
+				log.Println("Server lacks UIDPLUS; message stays flagged \\Deleted until next expunge")
 			}
 		}
 	}
@@ -378,7 +387,7 @@ func fetchUnseen(c *client.Client, section *imap.BodySectionName) {
 	messages := make(chan *imap.Message, 5)
 	done := make(chan error, 1)
 	go func() {
-		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, section.FetchItem()}, messages)
+		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope, imap.FetchUid, section.FetchItem()}, messages)
 	}()
 	for msg := range messages {
 		processMessage(c, msg, section)
