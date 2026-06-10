@@ -163,6 +163,18 @@ func htmlToText(htmlStr string) string {
 }
 
 // --- Notifiers ---
+
+// headerSafe strips control characters from email-derived values so a
+// crafted sender/subject cannot make the notification HTTP request fail
+func headerSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 func sendGotify(sender, subject, body string) {
 	payload := map[string]interface{}{
 		"title":    fmt.Sprintf("Email from %s", sender),
@@ -210,7 +222,7 @@ func sendNtfy(sender, subject, body string) {
 	}
 
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("Title", fmt.Sprintf("Email from %s", sender))
+	req.Header.Set("Title", headerSafe(fmt.Sprintf("Email from %s", sender)))
 	req.Header.Set("Priority", strconv.Itoa(NtfyPriority))
 	if NtfyAuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+NtfyAuthToken)
