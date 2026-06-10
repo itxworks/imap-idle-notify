@@ -298,6 +298,17 @@ func sendAlternativeMail(t *testing.T, from, subject, plain, htmlBody string) {
 	must(smtp.SendMail(smtpAddr, nil, from, []string{mailbox}, []byte(msg)))
 }
 
+// sendHTMLMail delivers an HTML-only mail (single text/html part) whose markup
+// includes <style> and <script> blocks, so tests can assert that inline CSS and
+// JavaScript never reach the notification body.
+func sendHTMLMail(t *testing.T, from, subject, htmlBody string) {
+	t.Helper()
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n"+
+		"MIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s\r\n",
+		from, mailbox, subject, htmlBody)
+	must(smtp.SendMail(smtpAddr, nil, from, []string{mailbox}, []byte(msg)))
+}
+
 func imapDo(t *testing.T, fn func(c *client.Client)) {
 	t.Helper()
 	c, err := client.DialTLS(imapHost+":"+imapPort, &tls.Config{RootCAs: tlsRootCAs, ServerName: imapHost})

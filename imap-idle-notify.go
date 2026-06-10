@@ -20,7 +20,7 @@ import (
 	"github.com/emersion/go-imap-uidplus"
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
-	"golang.org/x/net/html"
+	"github.com/k3a/html2text"
 )
 
 // --- ENV Helpers ---
@@ -143,23 +143,11 @@ func loadTLSConfig() (*tls.Config, error) {
 }
 
 // --- HTML to text ---
+// htmlToText extracts the visible text from an HTML body. It drops <script>
+// and <style> contents so inline CSS and tracking JavaScript never reach the
+// notification.
 func htmlToText(htmlStr string) string {
-	doc, err := html.Parse(strings.NewReader(htmlStr))
-	if err != nil {
-		return htmlStr
-	}
-	var buf bytes.Buffer
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.TextNode {
-			buf.WriteString(n.Data)
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-	}
-	f(doc)
-	return strings.TrimSpace(buf.String())
+	return strings.TrimSpace(html2text.HTML2Text(htmlStr))
 }
 
 // --- Notifiers ---

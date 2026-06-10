@@ -97,6 +97,28 @@ func TestMultipartBodySelection(t *testing.T) {
 	}
 }
 
+// TestHTMLBodyStripsScriptAndStyle: for an HTML-only mail the daemon converts
+// the markup to text for the notification body, dropping <style> and <script>
+// contents so inline CSS and tracking JavaScript never reach the user, while the
+// visible text is preserved.
+func TestHTMLBodyStripsScriptAndStyle(t *testing.T) {
+	purgeMailbox(t)
+	rec := newRecorder(t)
+	sendHTMLMail(t, "html@example.com", "HTML body",
+		"<html><head><style>.secret{color:css-token-leak}</style></head>"+
+			"<body><script>var s='js-token-leak';</script>"+
+			"<p>visible-token-keep</p></body></html>")
+	runDaemon(t, ntfyEnv(rec, map[string]string{"NOTIFY_ALL_EMAILS": "true"}))
+
+	req := rec.waitFor(t, "visible-token-keep")
+	if strings.Contains(req.Body, "css-token-leak") {
+		t.Errorf("CSS leaked into notification body: %q", req.Body)
+	}
+	if strings.Contains(req.Body, "js-token-leak") {
+		t.Errorf("JavaScript leaked into notification body: %q", req.Body)
+	}
+}
+
 // TestDomainFilter: a sender matching an @domain pattern is notified with the
 // configured NTFY_PRIORITY and NTFY_CLICK_ACTION, and a sender outside the
 // domain is ignored.
