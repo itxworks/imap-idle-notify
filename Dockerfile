@@ -9,9 +9,6 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /app
 
-# ca-certificates and tzdata are copied into the final image
-RUN apk add --no-cache ca-certificates tzdata
-
 # Copy Go modules files first for caching
 COPY go.mod go.sum ./
 RUN go mod download
@@ -25,11 +22,8 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o imap-idle-notify imap-idle-notify.go
 
 # --- Final minimal image ---
+# The distroless static base already ships ca-certificates and zoneinfo.
 FROM gcr.io/distroless/static-debian12:nonroot
-
-# Copy certificates and timezone data from the builder
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Copy the binary from builder
 COPY --from=builder /app/imap-idle-notify /imap-idle-notify
