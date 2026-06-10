@@ -118,8 +118,6 @@ var (
 	NtfyClickAction = env("NTFY_CLICK_ACTION", "")
 
 	SendMessageBody = envBool("SEND_MESSAGE_BODY", true)
-
-	AllowedFrom = make(map[string]bool)
 )
 
 // shared HTTP client (connection reuse + single timeout)
@@ -348,7 +346,7 @@ func check(addrs []*imap.Address) bool {
 		email := strings.ToLower(addr.MailboxName + "@" + addr.HostName)
 
 		// Check against all allowed patterns
-		for allowed := range AllowedFrom {
+		for _, allowed := range FromFilter {
 			// If pattern starts with @, it's a domain pattern
 			if strings.HasPrefix(allowed, "@") {
 				if strings.HasSuffix(email, allowed) {
@@ -456,10 +454,7 @@ func processMessage(c *client.Client, msg *imap.Message, section *imap.BodySecti
 	}
 
 SEND:
-	subject := ""
-	if msg.Envelope != nil {
-		subject = msg.Envelope.Subject
-	}
+	subject := msg.Envelope.Subject
 	sender := ""
 	if len(msg.Envelope.From) > 0 {
 		sender = strings.ToLower(msg.Envelope.From[0].MailboxName + "@" + msg.Envelope.From[0].HostName)
@@ -619,11 +614,6 @@ func main() {
 	}
 
 	slog.Info("starting IMAP notifier")
-
-	for _, addr := range FromFilter {
-		AllowedFrom[addr] = true
-		slog.Debug("allowed sender", "addr", addr)
-	}
 
 	startHealthServer()
 

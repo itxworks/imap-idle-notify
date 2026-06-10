@@ -27,10 +27,7 @@ func TestHeaderSafe(t *testing.T) {
 // check matches exact addresses case-insensitively and treats an @-prefixed
 // pattern as a domain suffix match.
 func TestCheck(t *testing.T) {
-	AllowedFrom = map[string]bool{
-		"alice@example.com": true,
-		"@trusted.org":      true,
-	}
+	FromFilter = []string{"alice@example.com", "@trusted.org"}
 	addr := func(mbox, host string) []*imap.Address {
 		return []*imap.Address{{MailboxName: mbox, HostName: host}}
 	}
