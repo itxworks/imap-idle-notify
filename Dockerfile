@@ -38,5 +38,9 @@ COPY --from=builder /app/imap-idle-notify ./
 # Use .env to pass env vars
 ENV TZ=UTC
 
+# Run as unprivileged user
+RUN adduser -D -H -u 10001 app && chown -R app:app /app
+USER app
+
 # Run the binary
 CMD ["./imap-idle-notify"]
