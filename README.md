@@ -34,7 +34,8 @@ CHECK_CC=false
 CHECK_BCC=false
 CHECK_TO=false
 
-# SKIP Filter
+# Bypass all filters and notify on every message. The daemon refuses to start
+# if this is false while every CHECK_* is also false.
 NOTIFY_ALL_EMAILS=false
 
 # Delete Message after processing 
@@ -57,6 +58,10 @@ NTFY_CLICK_ACTION=k9mail://messages
 
 # Send the body of message to notification
 SEND_MESSAGE_BODY=true
+
+# Health endpoint (used by the Docker HEALTHCHECK)
+HEALTH_PORT=8080
+HEALTH_MAX_FAILURES=5
 
 # Timezone
 TZ=UTC

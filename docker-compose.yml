@@ -7,4 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./certs:/app/certs:ro    # optional if you have certs
+      # Note: the container runs as uid 65532 (nonroot), so mounted cert
+      # files must be readable by that uid (e.g. a 0600 client key owned by
+      # your host user will fail with "permission denied").
 
